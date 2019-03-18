@@ -23,15 +23,17 @@
 #ifndef H_ELF_PARSER
 #define H_ELF_PARSER
 
-#include <iostream>
 #include <string>
 #include <cstdlib>
 #include <cstdio>
-// #include <fcntl.h>    /* O_RDONLY */
-// #include <sys/stat.h> /* For the size of the file. , fstat */
-// #include <sys/mman.h> /* mmap, MAP_PRIVATE */
 #include <vector>
-#include <elf.h>      // Elf64_Shdr
+#include <elf.h>
+
+#ifdef BIT_32
+static constexpr size_t bits = 32;
+#else
+static constexpr size_t bits = 64;
+#endif
 
 namespace elf_parser {
 
@@ -41,21 +43,21 @@ namespace elf_parser {
 					  std::intptr_t section_offset, section_addr;
 					  std::string section_name;
 					  std::string section_type; 
-					  int section_size, section_ent_size, section_addr_align;
+					  size_t section_size, section_ent_size, section_addr_align;
   };
 
   using segment_t = struct segment_t
 					{
 					  std::string segment_type, segment_flags;
-					  long segment_offset, segment_virtaddr, segment_physaddr, segment_filesize, segment_memsize;
-					  int segment_align;
+					  size_t segment_offset, segment_virtaddr, segment_physaddr, segment_filesize, segment_memsize;
+					  size_t segment_align;
   };
 
   using symbol_t = struct symbol_t
 				   {
 					 std::string symbol_index;
 					 std::intptr_t symbol_value;
-					 int symbol_num = 0, symbol_size = 0;
+					 size_t symbol_num = 0, symbol_size = 0;
 					 std::string symbol_type, symbol_bind, symbol_visibility, symbol_name, symbol_section;      
   };
 
@@ -70,6 +72,12 @@ namespace elf_parser {
   {
   public:
 
+	using Elf_Ehdr = std::conditional_t< bits == 64, Elf64_Ehdr, Elf32_Ehdr >;
+	using Elf_Shdr = std::conditional_t< bits == 64, Elf64_Shdr, Elf32_Shdr >;
+	using Elf_Phdr = std::conditional_t< bits == 64, Elf64_Phdr, Elf32_Phdr >;
+	using Elf_Sym = std::conditional_t< bits == 64, Elf64_Sym, Elf32_Sym >;
+	using Elf_Rela = std::conditional_t< bits == 64, Elf64_Rela, Elf32_Rela >;
+	
 	Elf_parser( std::string & program_path ) : m_program_path{ program_path }
 	{   
 	  load_memory_map();
@@ -91,9 +99,9 @@ namespace elf_parser {
 	std::string get_symbol_bind( uint8_t & sym_bind );
 	std::string get_symbol_visibility( uint8_t & sym_vis);
 	std::string get_symbol_index( uint16_t & sym_idx);
-	std::string get_relocation_type( uint64_t & rela_type);
-	std::intptr_t get_rel_symbol_value( uint64_t & sym_idx, std::vector< symbol_t > & syms );
-	std::string get_rel_symbol_name( uint64_t & sym_idx, std::vector< symbol_t > & syms );
+	std::string get_relocation_type( uint64_t rela_type);
+	std::intptr_t get_rel_symbol_value( uint64_t sym_idx, std::vector< symbol_t > & syms );
+	std::string get_rel_symbol_name( uint64_t sym_idx, std::vector< symbol_t > & syms );
 	std::string m_program_path; 
 	uint8_t * m_mmap_program;
   };

@@ -25,14 +25,15 @@ using namespace elf_parser;
 
 std::vector< section_t > Elf_parser::get_sections()
 {
-  Elf64_Ehdr *ehdr = ( Elf64_Ehdr * ) m_mmap_program;
-  Elf64_Shdr *shdr = ( Elf64_Shdr * )( m_mmap_program + ehdr->e_shoff );
+  Elf_Ehdr * ehdr = ( Elf_Ehdr * ) m_mmap_program;
+  Elf_Shdr * shdr = ( Elf_Shdr * )( m_mmap_program + ehdr->e_shoff );
   int shnum = ehdr->e_shnum;
 
-  Elf64_Shdr *sh_strtab = &shdr[ ehdr->e_shstrndx ];
+  Elf_Shdr *sh_strtab = &shdr[ ehdr->e_shstrndx ];
   const char *const sh_strtab_p = ( char * ) m_mmap_program + sh_strtab->sh_offset;
 
   std::vector< section_t > sections;
+
   for( int i = 0; i < shnum; ++ i ){
 	
 	section_t section;
@@ -43,8 +44,7 @@ std::vector< section_t > Elf_parser::get_sections()
 	section.section_offset = shdr[ i ].sh_offset;
 	section.section_size = shdr[ i ].sh_size;
 	section.section_ent_size = shdr[ i ].sh_entsize;
-	section.section_addr_align = shdr[ i ].sh_addralign; 
-        
+	section.section_addr_align = shdr[ i ].sh_addralign;         
 	sections.push_back( section );
   }
   
@@ -53,12 +53,12 @@ std::vector< section_t > Elf_parser::get_sections()
 
 std::vector< segment_t > Elf_parser::get_segments()
 {
-  Elf64_Ehdr * ehdr = ( Elf64_Ehdr * ) m_mmap_program;
-  Elf64_Phdr * phdr = ( Elf64_Phdr * )( m_mmap_program + ehdr->e_phoff );
+  Elf_Ehdr * ehdr = ( Elf_Ehdr * ) m_mmap_program;
+  Elf_Phdr * phdr = ( Elf_Phdr * )( m_mmap_program + ehdr->e_phoff );
   int phnum = ehdr->e_phnum;
 
-  Elf64_Shdr * shdr = ( Elf64_Shdr * )( m_mmap_program + ehdr->e_shoff );
-  Elf64_Shdr * sh_strtab = &shdr[ ehdr->e_shstrndx ];
+  Elf_Shdr * shdr = ( Elf_Shdr * )( m_mmap_program + ehdr->e_shoff );
+  Elf_Shdr * sh_strtab = &shdr[ ehdr->e_shstrndx ];
   const char * const sh_strtab_p = ( char * ) m_mmap_program + sh_strtab->sh_offset;
 
   std::vector< segment_t > segments;
@@ -86,13 +86,13 @@ std::vector< symbol_t > Elf_parser::get_symbols()
   std::vector< section_t > secs = get_sections();
 
   // get headers for offsets
-  Elf64_Ehdr * ehdr = ( Elf64_Ehdr * ) m_mmap_program;
-  Elf64_Shdr * shdr = ( Elf64_Shdr * )( m_mmap_program + ehdr->e_shoff );
+  Elf_Ehdr * ehdr = ( Elf_Ehdr * ) m_mmap_program;
+  Elf_Shdr * shdr = ( Elf_Shdr * )( m_mmap_program + ehdr->e_shoff );
 
   // get strtab
   char * sh_strtab_p = nullptr;
 
-  for( auto & sec: secs ){
+  for( section_t & sec: secs ){
 	  
 	if(( sec.section_type == "SHT_STRTAB" ) && ( sec.section_name == ".strtab" )){
 		
@@ -104,7 +104,7 @@ std::vector< symbol_t > Elf_parser::get_symbols()
   // get dynstr
   char * sh_dynstr_p = nullptr;
 
-  for( auto & sec: secs ){
+  for( section_t & sec: secs ){
 	  
 	if(( sec.section_type == "SHT_STRTAB" ) && ( sec.section_name == ".dynstr" )){
 		  
@@ -115,13 +115,13 @@ std::vector< symbol_t > Elf_parser::get_symbols()
 
   std::vector< symbol_t > symbols;
 	
-  for( auto & sec: secs ){
+  for( section_t & sec: secs ){
 	  
 	if(( sec.section_type != "SHT_SYMTAB" ) && ( sec.section_type != "SHT_DYNSYM" )) continue;
 
-	auto total_syms = sec.section_size / sizeof( Elf64_Sym );
-	auto syms_data = ( Elf64_Sym * )( m_mmap_program + sec.section_offset );
-
+	size_t total_syms = sec.section_size / sizeof( Elf_Sym );
+	Elf_Sym * syms_data = ( Elf_Sym * )( m_mmap_program + sec.section_offset );
+	
 	for( int i = 0; i < total_syms; ++ i ){
 		  
 	  symbol_t symbol;
@@ -145,13 +145,13 @@ std::vector< symbol_t > Elf_parser::get_symbols()
 
 std::vector< relocation_t > Elf_parser::get_relocations()
 {
-  auto secs = get_sections();
-  auto syms = get_symbols();
+  std::vector< section_t > secs = get_sections();
+  std::vector< symbol_t > syms = get_symbols();
     
   int  plt_entry_size = 0;
   long plt_vma_address = 0;
 
-  for( auto & sec : secs ){
+  for( section_t & sec : secs ){
 	  
 	if( sec.section_name == ".plt" ){
 		  
@@ -162,13 +162,13 @@ std::vector< relocation_t > Elf_parser::get_relocations()
   }
 
   std::vector< relocation_t > relocations;
-  for( auto & sec : secs ){
 
-	if(sec.section_type != "SHT_RELA") 
-	  continue;
+  for( section_t & sec : secs ){
 
-	auto total_relas = sec.section_size / sizeof( Elf64_Rela );
-	auto relas_data  = ( Elf64_Rela * )( m_mmap_program + sec.section_offset );
+	if( sec.section_type != "SHT_RELA" ) continue;
+	
+	size_t total_relas = sec.section_size / sizeof( Elf_Rela );
+	Elf_Rela * relas_data  = ( Elf_Rela * )( m_mmap_program + sec.section_offset );
 
 	for( int i = 0; i < total_relas; ++ i ){
 	  
@@ -210,13 +210,7 @@ void Elf_parser::load_memory_map()
   fread( m_mmap_program, f_size, 1, f );
   fclose( f );
   
-  auto header = ( Elf64_Ehdr * ) m_mmap_program;
-  
-  if( header->e_ident[ EI_CLASS ] != ELFCLASS64 ){
-	
-	std::printf( "Only 64-bit files supported\n" );
-	std::exit( 1 );
-  }
+  Elf_Ehdr * header = ( Elf_Ehdr * ) m_mmap_program;
 }
 
 std::string Elf_parser::get_section_type( int tt ){
@@ -344,7 +338,7 @@ std::string Elf_parser::get_symbol_index( uint16_t & sym_idx )
   return std::to_string( sym_idx );
 }
 
-std::string Elf_parser::get_relocation_type( uint64_t & rela_type )
+std::string Elf_parser::get_relocation_type( uint64_t rela_type )
 {
   switch( ELF64_R_TYPE( rela_type )){
 	  
@@ -359,11 +353,11 @@ std::string Elf_parser::get_relocation_type( uint64_t & rela_type )
   return "OTHERS";
 }
 
-std::intptr_t Elf_parser::get_rel_symbol_value( uint64_t & sym_idx, std::vector< symbol_t > & syms )
+std::intptr_t Elf_parser::get_rel_symbol_value( uint64_t sym_idx, std::vector< symbol_t > & syms )
 {    
   std::intptr_t sym_val = 0;
 	
-  for( auto & sym: syms ){
+  for( symbol_t & sym: syms ){
 
 	if( sym.symbol_num == ELF64_R_SYM( sym_idx )){
 		
@@ -375,11 +369,11 @@ std::intptr_t Elf_parser::get_rel_symbol_value( uint64_t & sym_idx, std::vector<
   return sym_val;
 }
 
-std::string Elf_parser::get_rel_symbol_name( uint64_t & sym_idx, std::vector< symbol_t > & syms )
+std::string Elf_parser::get_rel_symbol_name( uint64_t sym_idx, std::vector< symbol_t > & syms )
 {
   std::string sym_name;
 
-  for( auto & sym: syms ){
+  for( symbol_t & sym: syms ){
 	  
 	if( sym.symbol_num == ELF64_R_SYM( sym_idx )){
 		  

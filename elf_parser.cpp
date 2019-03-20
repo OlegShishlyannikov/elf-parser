@@ -39,7 +39,9 @@ std::vector< section_t > Elf_parser::get_sections()
 	section_t section;
 	section.section_index= i;
 	section.section_name = std::string( sh_strtab_p + shdr[ i ].sh_name );
+	section.section_name_hash = std::hash< std::string >()( section.section_name );
 	section.section_type = get_section_type( shdr[ i ].sh_type );
+	section.section_type_hash = std::hash< std::string >()( section.section_type );
 	section.section_addr = shdr[ i ].sh_addr;
 	section.section_offset = shdr[ i ].sh_offset;
 	section.section_size = shdr[ i ].sh_size;
@@ -67,14 +69,15 @@ std::vector< segment_t > Elf_parser::get_segments()
 	
 	segment_t segment;
 	segment.segment_type = get_segment_type( phdr[ i ].p_type );
+	segment.segment_type_hash = std::hash< std::string >()( segment.segment_type );
 	segment.segment_offset = phdr[ i ].p_offset;
 	segment.segment_virtaddr = phdr[ i ].p_vaddr;
 	segment.segment_physaddr = phdr[ i ].p_paddr;
 	segment.segment_filesize = phdr[ i ].p_filesz;
 	segment.segment_memsize = phdr[ i ].p_memsz;
 	segment.segment_flags = get_segment_flags( phdr[ i ].p_flags );
-	segment.segment_align = phdr[ i ].p_align;
-        
+	segment.segment_flags_hash = std::hash< std::string >()( segment.segment_flags );
+	segment.segment_align = phdr[ i ].p_align;        
 	segments.push_back( segment );
   }
 
@@ -119,7 +122,7 @@ std::vector< symbol_t > Elf_parser::get_symbols()
 	  
 	if(( sec.section_type != "SHT_SYMTAB" ) && ( sec.section_type != "SHT_DYNSYM" )) continue;
 
-	size_t total_syms = sec.section_size / sizeof( Elf_Sym );
+	uint64_t total_syms = sec.section_size / sizeof( Elf_Sym );
 	Elf_Sym * syms_data = ( Elf_Sym * )( m_mmap_program + sec.section_offset );
 	
 	for( int i = 0; i < total_syms; ++ i ){
@@ -129,13 +132,19 @@ std::vector< symbol_t > Elf_parser::get_symbols()
 	  symbol.symbol_value = syms_data[ i ].st_value;
 	  symbol.symbol_size = syms_data[ i ].st_size;
 	  symbol.symbol_type = get_symbol_type( syms_data[ i ].st_info );
+	  symbol.symbol_type_hash = std::hash< std::string >()( symbol.symbol_type );
 	  symbol.symbol_bind = get_symbol_bind( syms_data[ i ].st_info );
+	  symbol.symbol_bind_hash = std::hash< std::string >()( symbol.symbol_bind );
 	  symbol.symbol_visibility = get_symbol_visibility( syms_data[ i ].st_other );
+	  symbol.symbol_visibility_hash = std::hash< std::string >()( symbol.symbol_visibility );
 	  symbol.symbol_index = get_symbol_index( syms_data[ i ].st_shndx );
+	  symbol.symbol_index_hash = std::hash< std::string >()( symbol.symbol_index );
 	  symbol.symbol_section = sec.section_name;
-            
+	  symbol.symbol_section_hash = std::hash< std::string >()( symbol.symbol_section );
+	  
 	  if( sec.section_type == "SHT_SYMTAB" ) symbol.symbol_name = std::string( sh_strtab_p + syms_data[ i ].st_name );
 	  if( sec.section_type == "SHT_DYNSYM" ) symbol.symbol_name = std::string( sh_dynstr_p + syms_data[ i ].st_name );
+
 	  symbols.push_back( symbol );
 	}
   }
@@ -167,7 +176,7 @@ std::vector< relocation_t > Elf_parser::get_relocations()
 
 	if( sec.section_type != "SHT_RELA" ) continue;
 	
-	size_t total_relas = sec.section_size / sizeof( Elf_Rela );
+	uint64_t total_relas = sec.section_size / sizeof( Elf_Rela );
 	Elf_Rela * relas_data  = ( Elf_Rela * )( m_mmap_program + sec.section_offset );
 
 	for( int i = 0; i < total_relas; ++ i ){
@@ -176,10 +185,13 @@ std::vector< relocation_t > Elf_parser::get_relocations()
 	  rel.relocation_offset = static_cast< std::intptr_t >( relas_data[ i ].r_offset );
 	  rel.relocation_info = static_cast< std::intptr_t >( relas_data[ i ].r_info );
 	  rel.relocation_type = get_relocation_type( relas_data[ i ].r_info );
+	  rel.relocation_type_hash = std::hash< std::string >()( rel.relocation_type );
 	  rel.relocation_symbol_value = get_rel_symbol_value( relas_data[ i ].r_info, syms );
-	  rel.relocation_symbol_name = get_rel_symbol_name( relas_data[ i ].r_info, syms );            
+	  rel.relocation_symbol_name = get_rel_symbol_name( relas_data[ i ].r_info, syms );
+	  rel.relocation_symbol_name_hash = std::hash< std::string >()( rel.relocation_symbol_name );
 	  rel.relocation_plt_address = plt_vma_address + ( i + 1 ) * plt_entry_size;
-	  rel.relocation_section_name = sec.section_name;            
+	  rel.relocation_section_name = sec.section_name;
+	  rel.relocation_section_name_hash = std::hash< std::string >()( rel.relocation_section_name );
 	  relocations.push_back( rel );
 	}
   }

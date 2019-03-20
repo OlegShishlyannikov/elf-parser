@@ -27,12 +27,13 @@
 #include <cstdlib>
 #include <cstdio>
 #include <vector>
+#include <algorithm>
 #include <elf.h>
 
 #ifdef BIT_32
-static constexpr size_t bits = 32;
+static constexpr uint64_t bits = 32u;
 #else
-static constexpr size_t bits = 64;
+static constexpr uint64_t bits = 64u;
 #endif
 
 namespace elf_parser {
@@ -42,29 +43,49 @@ namespace elf_parser {
 					  int section_index = 0; 
 					  std::intptr_t section_offset, section_addr;
 					  std::string section_name;
+					  uint64_t section_name_hash;
 					  std::string section_type; 
-					  size_t section_size, section_ent_size, section_addr_align;
+					  uint64_t section_type_hash; 
+					  uint64_t section_size, section_ent_size, section_addr_align;
   };
 
   using segment_t = struct segment_t
 					{
-					  std::string segment_type, segment_flags;
-					  size_t segment_offset, segment_virtaddr, segment_physaddr, segment_filesize, segment_memsize;
-					  size_t segment_align;
+					  std::string segment_type;
+					  uint64_t segment_type_hash;
+					  std::string segment_flags;
+					  uint64_t segment_flags_hash;
+					  uint64_t segment_offset, segment_virtaddr, segment_physaddr, segment_filesize, segment_memsize;
+					  uint64_t segment_align;
   };
 
   using symbol_t = struct symbol_t
 				   {
 					 std::string symbol_index;
+					 uint64_t symbol_index_hash;
 					 std::intptr_t symbol_value;
-					 size_t symbol_num = 0, symbol_size = 0;
-					 std::string symbol_type, symbol_bind, symbol_visibility, symbol_name, symbol_section;      
+					 uint64_t symbol_num = 0, symbol_size = 0;
+					 std::string symbol_type;
+					 uint64_t symbol_type_hash;
+					 std::string symbol_bind;
+					 uint64_t symbol_bind_hash;
+					 std::string symbol_visibility;
+					 uint64_t symbol_visibility_hash;
+					 std::string symbol_name;
+					 uint64_t symbol_name_hash;
+					 std::string symbol_section;
+					 uint64_t symbol_section_hash;
   };
 
   using relocation_t = struct relocation_t
 					   {
 						 std::intptr_t relocation_offset, relocation_info, relocation_symbol_value;
-						 std::string   relocation_type, relocation_symbol_name, relocation_section_name;
+						 std::string relocation_type;
+						 uint64_t relocation_type_hash;
+						 std::string relocation_symbol_name;
+						 uint64_t relocation_symbol_name_hash;
+						 std::string relocation_section_name;
+						 uint64_t relocation_section_name_hash;
 						 std::intptr_t relocation_plt_address;
   };
 

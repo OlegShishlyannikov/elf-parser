@@ -1,20 +1,19 @@
 #include "elf_parser.hpp"
 
-using namespace elf_parser;
-
-std::vector< section_t > Elf_parser::get_sections()
+int elf_parser::elf_parser::get_sections( section_t ** sections_array )
 {
-  Elf_Ehdr * ehdr = ( Elf_Ehdr * ) m_mmap_program;
-  Elf_Shdr * shdr = ( Elf_Shdr * )( m_mmap_program + ehdr->e_shoff );
+  Elf_Ehdr * ehdr = reinterpret_cast< Elf_Ehdr * >( m_mmap_program );
+  Elf_Shdr * shdr = reinterpret_cast< Elf_Shdr * >( m_mmap_program + ehdr->e_shoff );
   int shnum = ehdr->e_shnum;
+  
+  Elf_Shdr * sh_strtab = &shdr[ ehdr->e_shstrndx ];
+  const char * const sh_strtab_p = reinterpret_cast< char * >( m_mmap_program ) + sh_strtab->sh_offset;
 
-  Elf_Shdr *sh_strtab = &shdr[ ehdr->e_shstrndx ];
-  const char *const sh_strtab_p = ( char * ) m_mmap_program + sh_strtab->sh_offset;
-
-  std::vector< section_t > sections;
-
+  *sections_array = nullptr;
+  *sections_array = reinterpret_cast< section_t * >( std::realloc( *sections_array, sizeof( section_t ) * shnum ));
+  
   for( int i = 0; i < shnum; ++ i ){
-
+	
     section_t section;
     section.section_index = i;
     section.section_name_hash = hash_64_fnv1a( sh_strtab_p + shdr[ i ].sh_name, std::strlen( static_cast< const char * >( sh_strtab_p + shdr[ i ].sh_name )));
@@ -24,24 +23,26 @@ std::vector< section_t > Elf_parser::get_sections()
     section.section_size = shdr[ i ].sh_size;
     section.section_ent_size = shdr[ i ].sh_entsize;
     section.section_addr_align = shdr[ i ].sh_addralign;
-    sections.push_back( section );
+	
+	std::memcpy( *sections_array + i, &section, sizeof( section_t ));
   }
 
-  return sections;
+  return shnum;
 }
 
-std::vector< segment_t > Elf_parser::get_segments()
+int elf_parser::elf_parser::get_segments( segment_t ** segments_array )
 {
-  Elf_Ehdr * ehdr = ( Elf_Ehdr * ) m_mmap_program;
-  Elf_Phdr * phdr = ( Elf_Phdr * )( m_mmap_program + ehdr->e_phoff );
+  Elf_Ehdr * ehdr = reinterpret_cast< Elf_Ehdr * >( m_mmap_program );
+  Elf_Phdr * phdr = reinterpret_cast< Elf_Phdr * >( m_mmap_program + ehdr->e_phoff );
   int phnum = ehdr->e_phnum;
 
-  Elf_Shdr * shdr = ( Elf_Shdr * )( m_mmap_program + ehdr->e_shoff );
+  Elf_Shdr * shdr = reinterpret_cast< Elf_Shdr * >( m_mmap_program + ehdr->e_shoff );
   Elf_Shdr * sh_strtab = &shdr[ ehdr->e_shstrndx ];
-  const char * const sh_strtab_p = ( char * ) m_mmap_program + sh_strtab->sh_offset;
+  const char * const sh_strtab_p = reinterpret_cast< char * >( m_mmap_program ) + sh_strtab->sh_offset;
 
-  std::vector< segment_t > segments;
-
+  *segments_array = nullptr;
+  *segments_array = reinterpret_cast< segment_t * >( std::realloc( *segments_array, sizeof( segment_t ) * phnum ));
+  
   for( int i = 0; i < phnum; ++ i ){
 
     segment_t segment;
@@ -53,156 +54,173 @@ std::vector< segment_t > Elf_parser::get_segments()
     segment.segment_memsize = phdr[ i ].p_memsz;
     segment.segment_flags_hash = get_segment_flags_hash( phdr[ i ].p_flags );
     segment.segment_align = phdr[ i ].p_align;
-    segments.push_back( segment );
+
+    std::memcpy( *segments_array + i, &segment, sizeof( segment_t ));
   }
 
-  return segments;
+  return phnum;
 }
 
-std::vector< symbol_t > Elf_parser::get_symbols()
+int elf_parser::elf_parser::get_symbols( symbol_t ** symbols_array )
 {
-  std::vector< section_t > secs = get_sections();
-
-  Elf_Ehdr * ehdr = ( Elf_Ehdr * ) m_mmap_program;
-  Elf_Shdr * shdr = ( Elf_Shdr * )( m_mmap_program + ehdr->e_shoff );
-
+  section_t * secs = nullptr;
+  int sec_num = get_sections( &secs );  
+  Elf_Ehdr * ehdr = reinterpret_cast< Elf_Ehdr * >( m_mmap_program );
+  Elf_Shdr * shdr = reinterpret_cast< Elf_Shdr * >( m_mmap_program + ehdr->e_shoff );
   char * sh_strtab_p = nullptr;
-
-  for( section_t & sec: secs ){
-
-    if(( sec.section_type_hash == hash_64_fnv1a_const( "SHT_STRTAB" ))
-       && ( sec.section_name_hash == hash_64_fnv1a_const( ".strtab" ))){
-
-      sh_strtab_p = ( char * ) m_mmap_program + sec.section_offset;
-      break;
-    }
-  }
-
   char * sh_dynstr_p = nullptr;
+  int syms_count = 0;
 
-  for( section_t & sec: secs ){
+  *symbols_array = nullptr;
+  
+  for( int i = 0; i < sec_num; i ++ ){
 
-    if(( sec.section_type_hash == hash_64_fnv1a_const( "SHT_STRTAB" ))
-       && ( sec.section_name_hash == hash_64_fnv1a_const( ".dynstr" ))){
+    if(( secs[ i ].section_type_hash == hash_64_fnv1a_const( "SHT_STRTAB" )) && ( secs[ i ].section_name_hash == hash_64_fnv1a_const( ".strtab" ))){
 
-      sh_dynstr_p = ( char * ) m_mmap_program + sec.section_offset;
+      sh_strtab_p = reinterpret_cast< char * >( m_mmap_program ) + secs[ i ].section_offset;
       break;
     }
   }
 
-  std::vector< symbol_t > symbols;
+  for( int i = 0; i < sec_num; i ++ ){
 
-  for( section_t & sec: secs ){
+    if(( secs[ i ].section_type_hash == hash_64_fnv1a_const( "SHT_STRTAB" )) && ( secs[ i ].section_name_hash == hash_64_fnv1a_const( ".dynstr" ))){
 
-    if(( sec.section_type_hash != hash_64_fnv1a_const( "SHT_SYMTAB" ))
-       && ( sec.section_type_hash != hash_64_fnv1a_const( "SHT_DYNSYM" )))
+      sh_dynstr_p = reinterpret_cast< char * >( m_mmap_program )  + secs[ i ].section_offset;
+      break;
+    }
+  }
+
+  for( int i = 0; i < sec_num; i ++ ){
+
+    if(( secs[ i ].section_type_hash != hash_64_fnv1a_const( "SHT_SYMTAB" )) && ( secs[ i ].section_type_hash != hash_64_fnv1a_const( "SHT_DYNSYM" )))
       continue;
 
-    uint64_t total_syms = sec.section_size / sizeof( Elf_Sym );
-    Elf_Sym * syms_data = ( Elf_Sym * )( m_mmap_program + sec.section_offset );
-
-    for( int i = 0; i < total_syms; ++ i ){
-
+    int total_syms = secs[ i ].section_size / sizeof( Elf_Sym );
+    Elf_Sym * syms_data = reinterpret_cast< Elf_Sym * >( m_mmap_program + secs[ i ].section_offset );
+	syms_count += total_syms;
+	symbol_t * temp_symbols = reinterpret_cast< symbol_t * >( std::malloc( sizeof( symbol_t ) * total_syms ));
+	
+    for( int j = 0; j < total_syms; ++ j ){
+	  
       symbol_t symbol;
-      symbol.symbol_num = i;
-      symbol.symbol_value = syms_data[ i ].st_value;
-      symbol.symbol_size = syms_data[ i ].st_size;
-      symbol.symbol_type_hash = get_symbol_type_hash( syms_data[ i ].st_info );
-      symbol.symbol_bind_hash = get_symbol_bind_hash( syms_data[ i ].st_info );
-      symbol.symbol_visibility_hash = get_symbol_visibility_hash( syms_data[ i ].st_other );
-      symbol.symbol_index_hash = get_symbol_index_hash( syms_data[ i ].st_shndx );
-      symbol.symbol_section_hash = sec.section_name_hash;
+      symbol.symbol_num = j;
+      symbol.symbol_value = syms_data[ j ].st_value;
+      symbol.symbol_size = syms_data[ j ].st_size;
+      symbol.symbol_type_hash = get_symbol_type_hash( syms_data[ j ].st_info );
+      symbol.symbol_bind_hash = get_symbol_bind_hash( syms_data[ j ].st_info );
+      symbol.symbol_visibility_hash = get_symbol_visibility_hash( syms_data[ j ].st_other );
+      symbol.symbol_index_hash = get_symbol_index_hash( syms_data[ j ].st_shndx );
+      symbol.symbol_section_hash = secs[ i ].section_name_hash;
 
-      if( sec.section_type_hash == hash_64_fnv1a_const( "SHT_SYMTAB" ))
-        symbol.symbol_name_hash = hash_64_fnv1a( sh_strtab_p + syms_data[ i ].st_name,
-                                                 std::strlen( static_cast< const char * >( sh_strtab_p + syms_data[ i ].st_name )));
+      if( secs[ i ].section_type_hash == hash_64_fnv1a_const( "SHT_SYMTAB" ))
+        symbol.symbol_name_hash = hash_64_fnv1a( sh_strtab_p + syms_data[ j ].st_name, std::strlen( static_cast< const char * >( sh_strtab_p + syms_data[ j ].st_name )));
 
-      if( sec.section_type_hash == hash_64_fnv1a_const( "SHT_DYNSYM" ))
-        symbol.symbol_name_hash = hash_64_fnv1a( sh_dynstr_p + syms_data[ i ].st_name,
-                                                 std::strlen( static_cast< const char * >( sh_dynstr_p + syms_data[ i ].st_name )));
+      if( secs[ i ].section_type_hash == hash_64_fnv1a_const( "SHT_DYNSYM" ))
+        symbol.symbol_name_hash = hash_64_fnv1a( sh_dynstr_p + syms_data[ j ].st_name, std::strlen( static_cast< const char * >( sh_dynstr_p + syms_data[ j ].st_name )));
 
-      symbols.push_back( symbol );
+	  std::memcpy( &temp_symbols[ j ], &symbol, sizeof( symbol_t ));
     }
+
+	*symbols_array = reinterpret_cast< symbol_t * >( std::realloc( *symbols_array, syms_count * sizeof( symbol_t )));
+	std::memcpy( *symbols_array + ( syms_count - total_syms ), temp_symbols, total_syms * sizeof( symbol_t ));
+	std::free( temp_symbols );
   }
 
-  return symbols;
+  std::free( secs );
+  return syms_count;
 }
 
-std::vector< relocation_t > Elf_parser::get_relocations()
+int elf_parser::elf_parser::get_relocations( relocation_t ** relocs_array )
 {
-  std::vector< section_t > secs = get_sections();
-  std::vector< symbol_t > syms = get_symbols();
-
-  int  plt_entry_size = 0;
+  section_t * secs = nullptr;
+  symbol_t * syms = nullptr;
+  int syms_num = get_symbols( &syms );
+  int sec_num = get_sections( &secs );
+  int plt_entry_size = 0;
   long plt_vma_address = 0;
+  int relocs_count = 0;
+  
+  for( int i = 0; i < sec_num; i ++ ){
 
-  for( section_t & sec : secs ){
+    if( secs[ i ].section_name_hash == hash_64_fnv1a_const( ".plt" )){
 
-    if( sec.section_name_hash == hash_64_fnv1a_const( ".plt" )){
-
-      plt_entry_size = sec.section_ent_size;
-      plt_vma_address = sec.section_addr;
+      plt_entry_size = secs[ i ].section_ent_size;
+      plt_vma_address = secs[ i ].section_addr;
       break;
     }
   }
 
-  std::vector< relocation_t > relocations;
+  for( int i = 0; i < sec_num; i ++ ){
 
-  for( section_t & sec : secs ){
+    if( secs[ i ].section_type_hash == hash_64_fnv1a_const( "SHT_RELA" )){
 
-    if( sec.section_type_hash == hash_64_fnv1a_const( "SHT_RELA" )){
-
-      uint64_t total_relas = sec.section_size / sizeof( Elf_Rela );
-      Elf_Rela * relas_data  = ( Elf_Rela * )( m_mmap_program + sec.section_offset );
-
-      for( uint64_t i = 0; i < total_relas; ++ i ){
-
-        relocation_t rel;
-        rel.relocation_offset = static_cast< std::intptr_t >( relas_data[ i ].r_offset );
-        rel.relocation_info = static_cast< std::intptr_t >( relas_data[ i ].r_info );
-        rel.relocation_type_hash = get_relocation_type_hash( relas_data[ i ].r_info );
-        rel.relocation_symbol_value = get_rel_symbol_value( relas_data[ i ].r_info, syms );
-        rel.relocation_symbol_name_hash = get_rel_symbol_name_hash( relas_data[ i ].r_info, syms );
-        rel.relocation_plt_address = plt_vma_address + ( i + 1 ) * plt_entry_size;
-        rel.relocation_section_name_hash = sec.section_name_hash;
-        relocations.push_back( rel );
-
-      }
-    } else if( sec.section_type_hash == hash_64_fnv1a_const( "SHT_REL" )){
-
-      uint64_t total_relas = sec.section_size / sizeof( Elf_Rel );
-      Elf_Rel * relas_data  = ( Elf_Rel * )( m_mmap_program + sec.section_offset );
-
-      for( uint64_t i = 0; i < total_relas; ++ i ){
+      uint64_t total_relas = secs[ i ].section_size / sizeof( Elf_Rela );
+      Elf_Rela * relas_data  = reinterpret_cast< Elf_Rela * >( m_mmap_program + secs[ i ].section_offset );
+	  relocs_count += total_relas;
+	  relocation_t * temp_relas = reinterpret_cast< relocation_t * >( std::malloc( sizeof( relocation_t ) * total_relas ));
+	  
+      for( int j = 0; j < total_relas; j ++ ){
 
         relocation_t rel;
-        rel.relocation_offset = static_cast< std::intptr_t >( relas_data[ i ].r_offset );
-        rel.relocation_info = static_cast< std::intptr_t >( relas_data[ i ].r_info );
-        rel.relocation_type_hash = get_relocation_type_hash( relas_data[ i ].r_info );
-        rel.relocation_symbol_value = get_rel_symbol_value( relas_data[ i ].r_info, syms );
-        rel.relocation_symbol_name_hash = get_rel_symbol_name_hash( relas_data[ i ].r_info, syms );
-        rel.relocation_plt_address = plt_vma_address + ( i + 1 ) * plt_entry_size;
-        rel.relocation_section_name_hash = sec.section_name_hash;
-        relocations.push_back( rel );
-
+        rel.relocation_offset = static_cast< std::intptr_t >( relas_data[ j ].r_offset );
+        rel.relocation_info = static_cast< std::intptr_t >( relas_data[ j ].r_info );
+        rel.relocation_type_hash = get_relocation_type_hash( relas_data[ j ].r_info );
+        rel.relocation_symbol_value = get_rel_symbol_value( relas_data[ j ].r_info, syms, syms_num );
+        rel.relocation_symbol_name_hash = get_rel_symbol_name_hash( relas_data[ j ].r_info, syms, syms_num );
+        rel.relocation_plt_address = plt_vma_address + ( j + 1 ) * plt_entry_size;
+        rel.relocation_section_name_hash = secs[ i ].section_name_hash;
+		
+        std::memcpy( temp_relas + j, &rel, sizeof( relocation_t ));
       }
+
+	  *relocs_array = reinterpret_cast< relocation_t * >( std::realloc( *relocs_array, relocs_count * sizeof( relocation_t )));
+	  std::memcpy( *relocs_array + ( relocs_count - total_relas ), temp_relas, total_relas * sizeof( relocation_t ));
+	  std::free( temp_relas );
+
+	} else if( secs[ i ].section_type_hash == hash_64_fnv1a_const( "SHT_REL" )){
+
+      uint64_t total_relas = secs[ i ].section_size / sizeof( Elf_Rel );
+      Elf_Rel * relas_data  = reinterpret_cast< Elf_Rel * >( m_mmap_program + secs[ i ].section_offset );
+	  relocs_count += total_relas;
+	  relocation_t * temp_relas = reinterpret_cast< relocation_t * >( std::malloc( sizeof( relocation_t ) * total_relas ));
+
+      for( int j = 0; j < total_relas; j ++ ){
+
+        relocation_t rel;
+        rel.relocation_offset = static_cast< std::intptr_t >( relas_data[ j ].r_offset );
+        rel.relocation_info = static_cast< std::intptr_t >( relas_data[ j ].r_info );
+        rel.relocation_type_hash = get_relocation_type_hash( relas_data[ j ].r_info );
+        rel.relocation_symbol_value = get_rel_symbol_value( relas_data[ j ].r_info, syms, syms_num );
+        rel.relocation_symbol_name_hash = get_rel_symbol_name_hash( relas_data[ j ].r_info, syms, syms_num );
+        rel.relocation_plt_address = plt_vma_address + ( j + 1 ) * plt_entry_size;
+        rel.relocation_section_name_hash = secs[ i ].section_name_hash;
+		
+        std::memcpy( &temp_relas[ j ], &rel, sizeof( relocation_t ));
+      }
+	  
+	  *relocs_array = reinterpret_cast< relocation_t * >( std::realloc( *relocs_array, relocs_count * sizeof( relocation_t )));
+	  std::memcpy( *relocs_array +( relocs_count - total_relas ), temp_relas, total_relas * sizeof( relocation_t ));
+	  std::free( temp_relas );
 
     } else {
 
       continue;
-
     }
   }
 
-  return relocations;
+  std::free( syms );
+  std::free( secs );
+  return relocs_count;
 }
 
-uint8_t * Elf_parser::get_memory_map()
+int elf_parser::elf_parser::get_memory_map( uint8_t ** mmap )
 {
-  return m_mmap_program;
+  *mmap = m_mmap_program;
+  return 0;
 }
 
-void Elf_parser::load_memory_map()
+void elf_parser::elf_parser::load_memory_map()
 {
   FILE * f = fopen( m_program_path, "rb" );
 
@@ -212,18 +230,16 @@ void Elf_parser::load_memory_map()
     std::exit( 1 );
   }
 
-  fseek( f, 0, SEEK_END );
+  std::fseek( f, 0, SEEK_END );
   unsigned long f_size = ftell( f );
-  fseek( f, 0, SEEK_SET );
+  std::fseek( f, 0, SEEK_SET );
 
   m_mmap_program = static_cast< uint8_t * >( std::malloc( f_size ));
-  fread( m_mmap_program, f_size, 1, f );
-  fclose( f );
-
-  Elf_Ehdr * header = ( Elf_Ehdr * ) m_mmap_program;
+  std::fread( m_mmap_program, f_size, 1, f );
+  std::fclose( f );
 }
 
-uint64_t Elf_parser::get_section_type_hash( int tt ){
+uint64_t elf_parser::elf_parser::get_section_type_hash( int tt ){
 
   if( tt < 0 ) return hash_64_fnv1a_const( "UNKNOWN" );
 
@@ -246,7 +262,7 @@ uint64_t Elf_parser::get_section_type_hash( int tt ){
   return hash_64_fnv1a_const( "UNKNOWN" );
 }
 
-uint64_t Elf_parser::get_segment_type_hash( uint32_t & seg_type )
+uint64_t elf_parser::elf_parser::get_segment_type_hash( uint32_t & seg_type )
 {
   switch( seg_type ){
 
@@ -274,7 +290,7 @@ uint64_t Elf_parser::get_segment_type_hash( uint32_t & seg_type )
   return hash_64_fnv1a_const( "UNKNOWN" );
 }
 
-uint64_t Elf_parser::get_segment_flags_hash( uint32_t & seg_flags )
+uint64_t elf_parser::elf_parser::get_segment_flags_hash( uint32_t & seg_flags )
 {
   if(( seg_flags & PF_R ) && ( seg_flags & PF_W ) && ( seg_flags & PF_X )){
 
@@ -292,30 +308,29 @@ uint64_t Elf_parser::get_segment_flags_hash( uint32_t & seg_flags )
 
     return hash_64_fnv1a_const( "R" );
 
-  } else if(!( seg_flags & PF_R ) && ( seg_flags & PF_W ) && ( seg_flags & PF_X )){
+  } else if( !( seg_flags & PF_R ) && ( seg_flags & PF_W ) && ( seg_flags & PF_X )){
 
     return hash_64_fnv1a_const( "WX" );
 
-  } else if(!( seg_flags & PF_R ) && ( seg_flags & PF_W ) && !( seg_flags & PF_X )){
+  } else if( !( seg_flags & PF_R ) && ( seg_flags & PF_W ) && !( seg_flags & PF_X )){
 
     return hash_64_fnv1a_const( "W" );
 
-  } else if(!( seg_flags & PF_R ) && !( seg_flags & PF_W ) && ( seg_flags & PF_X )){
+  } else if( !( seg_flags & PF_R ) && !( seg_flags & PF_W ) && ( seg_flags & PF_X )){
 
     return hash_64_fnv1a_const( "X" );
 
-  } else if(!( seg_flags & PF_R ) && !( seg_flags & PF_W ) && !( seg_flags & PF_X )){
+  } else if( !( seg_flags & PF_R ) && !( seg_flags & PF_W ) && !( seg_flags & PF_X )){
 
     return hash_64_fnv1a_const( "" );
 
   } else {
 
     return hash_64_fnv1a_const( "" );
-
   }
 }
 
-uint64_t Elf_parser::get_symbol_type_hash( uint8_t & sym_type )
+uint64_t elf_parser::elf_parser::get_symbol_type_hash( uint8_t & sym_type )
 {
   switch( ELF32_ST_TYPE( sym_type )){
 
@@ -333,7 +348,8 @@ uint64_t Elf_parser::get_symbol_type_hash( uint8_t & sym_type )
 
   return hash_64_fnv1a_const( "UNKNOWN" );
 }
-uint64_t Elf_parser::get_symbol_bind_hash( uint8_t & sym_bind )
+
+uint64_t elf_parser::elf_parser::get_symbol_bind_hash( uint8_t & sym_bind )
 {
   switch( ELF32_ST_BIND( sym_bind )){
 
@@ -350,7 +366,7 @@ uint64_t Elf_parser::get_symbol_bind_hash( uint8_t & sym_bind )
   return hash_64_fnv1a_const( "UNKNOWN" );
 }
 
-uint64_t Elf_parser::get_symbol_visibility_hash( uint8_t & sym_vis )
+uint64_t elf_parser::elf_parser::get_symbol_visibility_hash( uint8_t & sym_vis )
 {
   switch( ELF32_ST_VISIBILITY( sym_vis )){
 
@@ -364,7 +380,7 @@ uint64_t Elf_parser::get_symbol_visibility_hash( uint8_t & sym_vis )
   return hash_64_fnv1a_const( "UNKNOWN" );
 }
 
-uint64_t Elf_parser::get_symbol_index_hash( uint16_t & sym_idx )
+uint64_t elf_parser::elf_parser::get_symbol_index_hash( uint16_t & sym_idx )
 {
   char str[ 2 ];
   std::snprintf( str, sizeof( sym_idx ), "%u", sym_idx );
@@ -381,9 +397,8 @@ uint64_t Elf_parser::get_symbol_index_hash( uint16_t & sym_idx )
   return hash_64_fnv1a( str, sizeof( str ) / sizeof( str[ 0 ]));
 }
 
-uint64_t Elf_parser::get_relocation_type_hash( uint64_t rela_type )
+uint64_t elf_parser::elf_parser::get_relocation_type_hash( uint64_t rela_type )
 {
-#ifdef ARM32
   switch( ELF32_R_TYPE( rela_type )){
   case 0 : return hash_64_fnv1a_const( "R_ARM_NONE" );
   case 1 : return hash_64_fnv1a_const( "R_ARM_PC24" );
@@ -394,30 +409,18 @@ uint64_t Elf_parser::get_relocation_type_hash( uint64_t rela_type )
   default: return hash_64_fnv1a_const( "OTHERS" );
   }
 
-#else
-  switch( ELF64_R_TYPE( rela_type )){
-  case 0 : return hash_64_fnv1a_const( "R_X86_64_NONE" );
-  case 1 : return hash_64_fnv1a_const( "R_X86_64_32" );
-  case 2 : return hash_64_fnv1a_const( "R_X86_64_PC32" );
-  case 5 : return hash_64_fnv1a_const( "R_X86_64_COPY" );
-  case 6 : return hash_64_fnv1a_const( "R_X86_64_GLOB_DAT" );
-  case 7 :  return hash_64_fnv1a_const( "R_X86_64_JUMP_SLOT" );
-  default: return hash_64_fnv1a_const( "OTHERS" );
-  }
-#endif
-
   return hash_64_fnv1a_const( "OTHERS" );
 }
 
-std::intptr_t Elf_parser::get_rel_symbol_value( uint64_t sym_idx, std::vector< symbol_t > & syms )
+std::intptr_t elf_parser::elf_parser::get_rel_symbol_value( uint64_t sym_idx, symbol_t * syms, int syms_count )
 {
   std::intptr_t sym_val = 0;
 
-  for( symbol_t & sym: syms ){
+  for( int i = 0; i < syms_count; i ++ ){
 
-    if( sym.symbol_num == ELF64_R_SYM( sym_idx )){
-
-      sym_val = sym.symbol_value;
+    if( syms[ i ].symbol_num == ELF32_R_SYM( sym_idx )){
+	  
+      sym_val = syms[ i ].symbol_value;
       break;
     }
   }
@@ -425,28 +428,18 @@ std::intptr_t Elf_parser::get_rel_symbol_value( uint64_t sym_idx, std::vector< s
   return sym_val;
 }
 
-uint64_t Elf_parser::get_rel_symbol_name_hash( uint64_t sym_idx, std::vector< symbol_t > & syms )
+uint64_t elf_parser::elf_parser::get_rel_symbol_name_hash( uint64_t sym_idx, symbol_t * syms, int syms_count )
 {
-  uint64_t sym_name;
+  uint64_t sym_name_hash;
 
-  for( symbol_t & sym: syms ){
+  for( int i = 0; i < syms_count; i ++ ){
 
-#ifdef ARM32
-    if( sym.symbol_num == ELF32_R_SYM( sym_idx )){
+    if( syms[ i ].symbol_num == ELF32_R_SYM( sym_idx )){
 
-      sym_name = sym.symbol_name_hash;
+      sym_name_hash = syms[ i ].symbol_name_hash;
       break;
     }
   }
 
-#else
-  if( sym.symbol_num == ELF64_R_SYM( sym_idx )){
-
-    sym_name = sym.symbol_name_hash;
-    break;
-  }
-}
-
-#endif /* ARM32 */
-return sym_name;
+  return sym_name_hash;
 }

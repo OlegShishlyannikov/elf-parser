@@ -12,7 +12,7 @@
 static constexpr uint64_t bits = 32u;
 
 namespace elf_parser {
-
+  
   using section_t = struct section_t
                     {
                       int section_index = 0;
